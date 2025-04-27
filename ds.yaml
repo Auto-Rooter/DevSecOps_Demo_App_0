@@ -55,7 +55,7 @@ spec:
     spec:
       containers:
         - name: bankapp
-          image: autorooter/bankapp:v21
+          image: autorooter/bankapp:v22
           ports:
             - containerPort: 8080
           env:
