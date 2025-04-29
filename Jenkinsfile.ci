@@ -98,7 +98,7 @@ pipeline {
                             # Fix the remote to include authentication
                             git remote set-url origin https://${GIT_USERNAME}:${GIT_PASSWORD}@${GIT_REPO_CLEAN}.git
 
-                            sed -i "s|autorooter/bankapp:.*|autorooter/bankapp:${IMAGE_TAG}|" ds.yaml
+                            sed -i "s|autorooter/bankapp:.*|autorooter/bankapp:${IMAGE_TAG}|" manifests/ds.yaml
 
                             # Show changes
                             echo "[+] Updated manifest file content:"
@@ -107,7 +107,7 @@ pipeline {
                             # Commit and push changes
                             git config user.name "deployzilla"
                             git config user.email "deployzilla@mergechaos.com"
-                            git add ds.yaml
+                            git add manifests/ds.yaml
                             git commit -m "CI: Update docker image tag to ${IMAGE_TAG}"
                             git push origin main
                         '''
