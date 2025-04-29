@@ -1,0 +1,21 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('Git Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/Auto-Rooter/DevSecOps_Demo_App_0'
+            }
+        }
+        stage('Creating K8 Cluster') {
+            steps {
+                withKubeConfig(caCertificate: '', clusterName: 'lastminutefix-cluster', contextName: '', credentialsId: 'k8-cred', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://F805316DC0CA273A43A2E1743F9037FB.gr7.eu-central-1.eks.amazonaws.com') {
+                    sh 'kubectl apply -f manifests/ds.yaml'
+                    sleep 30
+                    sh 'kubectl get pods -n webapps'
+                    sh 'kubectl get services -n webapps'
+                }
+            }
+        }
+    }
+}

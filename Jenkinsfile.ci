@@ -1,0 +1,205 @@
+pipeline {
+    agent any
+    tools {
+        maven 'maven3'
+    }
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
+        IMAGE_TAG = "v${BUILD_NUMBER}"
+        GIT_REPO = "https://github.com/Auto-Rooter/DevSecOps_Demo_App_0"
+        GIT_REPO_CLEAN = "github.com/Auto-Rooter/DevSecOps_Demo_App_0"
+        GIT_BRANCH = "main"
+    }
+    stages {
+        stage('Git Checkout') {
+            steps {
+                git branch: 'main', url: "${GIT_REPO}.git"
+            }
+        }
+        stage('Compile') {
+            steps {
+                sh 'mvn compile'
+            }
+        }
+        stage('Test') {
+            steps {
+                sh 'mvn test'
+            }
+        }
+        stage('Trivy FS Scan') {
+            steps {
+                sh 'trivy fs --format table -o fs-lastminutefix-report.html .'
+            }
+        }
+        stage('Sonarqube Analysis') {
+            steps {
+                withSonarQubeEnv('sonar') {
+                    sh ''' $SCANNER_HOME/bin/sonar-scanner \
+                        -Dsonar.projectName=BankApp \
+                        -Dsonar.projectKey=BankApp \
+                        -Dsonar.java.binaries=target'''
+                }
+            }
+        }
+        stage('Quality Gate Check') {
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
+                }
+            }
+        }
+        stage('Build') {
+            steps {
+                sh 'mvn package'
+            }
+        }
+        stage('Publish Artifacts') {
+            steps {
+                withMaven(globalMavenSettingsConfig: 'lastminutefix', jdk: '', maven: 'maven3', mavenSettingsConfig: '', traceability: true) {
+                    sh 'mvn deploy'
+                }
+            }
+        }
+        stage('Build & Tag Docker Image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred') {
+                        sh 'docker build -t autorooter/bankapp:$IMAGE_TAG .'
+                    }
+                }
+            }
+        }
+        stage('Trivy Docker Image Scan') {
+            steps {
+                sh 'trivy image --format table -o image-lastminutefix-report.html autorooter/bankapp:$IMAGE_TAG'
+            }
+        }
+        stage('Push Docker Image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred') {
+                        sh 'docker push autorooter/bankapp:$IMAGE_TAG'
+                    }
+                }
+            }
+        }
+        stage('Update Manifest File in the BankApp') {
+            steps {
+                script {
+                    cleanWs()
+                    withCredentials([usernamePassword(credentialsId: 'github-token', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
+                        sh '''
+                            # Clone the repo with authentication
+                            git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@${GIT_REPO_CLEAN}.git
+
+                            # Update the image tag
+                            cd DevSecOps_Demo_App_0
+
+                            # Fix the remote to include authentication
+                            git remote set-url origin https://${GIT_USERNAME}:${GIT_PASSWORD}@${GIT_REPO_CLEAN}.git
+
+                            sed -i "s|autorooter/bankapp:.*|autorooter/bankapp:${IMAGE_TAG}|" ds.yaml
+
+                            # Show changes
+                            echo "[+] Updated manifest file content:"
+                            cat ds.yaml
+
+                            # Commit and push changes
+                            git config user.name "deployzilla"
+                            git config user.email "deployzilla@mergechaos.com"
+                            git add ds.yaml
+                            git commit -m "CI: Update docker image tag to ${IMAGE_TAG}"
+                            git push origin main
+                        '''
+                    }
+                }
+            }
+        }
+    }
+        post {
+        success {
+            echo "Pipeline completed successfully!"
+            emailext (
+                subject: "SUCCESS: Jenkins Pipeline for ${IMAGE_TAG}",
+                body: """
+                    <div style="font-family: Arial, sans-serif; padding: 20px; border: 2px solid #4CAF50; border-radius: 10px;">
+                        <h2 style="color: #4CAF50;">🎉 Pipeline Execution: SUCCESS 🎉</h2>
+                        <p style="font-size: 16px; color: #333;">
+                            Hello Team,
+                        </p>
+                        <p style="font-size: 16px; color: #333;">
+                            The Jenkins pipeline for <strong style="color: #4CAF50;">${IMAGE_TAG}</strong> completed <strong style="color: #4CAF50;">successfully</strong>!
+                        </p>
+                        <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
+                            <tr style="background-color: #f2f2f2;">
+                                <th style="text-align: left; padding: 8px; border: 1px solid #ddd;">Details</th>
+                                <th style="text-align: left; padding: 8px; border: 1px solid #ddd;">Values</th>
+                            </tr>
+                            <tr>
+                                <td style="padding: 8px; border: 1px solid #ddd;">Git Repository</td>
+                                <td style="padding: 8px; border: 1px solid #ddd;">${GIT_REPO}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 8px; border: 1px solid #ddd;">Branch</td>
+                                <td style="padding: 8px; border: 1px solid #ddd;">${GIT_BRANCH}</td>
+                            </tr>
+                        </table>
+                        <p style="font-size: 16px; color: #333; margin-top: 20px;">
+                            Visit <a href="${BUILD_URL}" style="color: #4CAF50;">Pipeline Logs</a> for more details.
+                        </p>
+                        <p style="font-size: 16px; color: #333; margin-top: 20px;">
+                            Thanks,<br>
+                            <strong>Jenkins</strong>
+                        </p>
+                    </div>
+                """,
+                to: "hadi.assalem@gmail.com",
+                from: "jenkins@example.com",
+                mimeType: 'text/html',
+                attachmentsPattern: '**/*-lastminutefix-report.html'
+            )
+        }
+        failure {
+            echo "Pipeline failed. Please check the logs."
+            emailext (
+                subject: "FAILURE: Jenkins Pipeline for ${IMAGE_TAG}",
+                body: """
+                    <div style="font-family: Arial, sans-serif; padding: 20px; border: 2px solid #F44336; border-radius: 10px;">
+                        <h2 style="color: #F44336;">🚨 Pipeline Execution: FAILURE 🚨</h2>
+                        <p style="font-size: 16px; color: #333;">
+                            Hello Team,
+                        </p>
+                        <p style="font-size: 16px; color: #333;">
+                            Unfortunately, the Jenkins pipeline for <strong style="color: #F44336;">${IMAGE_TAG}</strong> has <strong style="color: #F44336;">failed</strong>.
+                        </p>
+                        <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
+                            <tr style="background-color: #f2f2f2;">
+                                <th style="text-align: left; padding: 8px; border: 1px solid #ddd;">Details</th>
+                                <th style="text-align: left; padding: 8px; border: 1px solid #ddd;">Values</th>
+                            </tr>
+                            <tr>
+                                <td style="padding: 8px; border: 1px solid #ddd;">Git Repository</td>
+                                <td style="padding: 8px; border: 1px solid #ddd;">${GIT_REPO}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 8px; border: 1px solid #ddd;">Branch</td>
+                                <td style="padding: 8px; border: 1px solid #ddd;">${GIT_BRANCH}</td>
+                            </tr>
+                        </table>
+                        <p style="font-size: 16px; color: #333; margin-top: 20px;">
+                            Visit <a href="${BUILD_URL}" style="color: #F44336;">Pipeline Logs</a> for more details.
+                        </p>
+                        <p style="font-size: 16px; color: #333; margin-top: 20px;">
+                            Thanks,<br>
+                            <strong>Jenkins</strong>
+                        </p>
+                    </div>
+                """,
+                to: "hadi.assalem@gmail.com",
+                from: "jenkins@example.com",
+                mimeType: 'text/html',
+                attachmentsPattern: '**/*-lastminutefix-report.html'
+            )
+        }
+    }
+}
